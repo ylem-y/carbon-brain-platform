@@ -1522,6 +1522,7 @@ s.t. 载重 · 服务唯一 · 启用关联 · 流守恒 · <span style="color:v
       <label>出发SOC</label><input id="p10Soc" type="number" value="100" min="40" max="100" step="5" style="width:58px"><span style="font-size:11px;color:var(--dim)">%</span>
       <button class="btn sm" id="p10Run">▶ 运行引擎</button>
       <button class="btn sm o" id="p10Road">⟳ 刷新真实路网</button>
+      <button class="btn sm" id="p10Reload">⟲ 重载地图</button>
     </div>
     <div id="p10Map" style="height:430px;border-radius:7px;overflow:hidden;border:1px solid var(--border)"></div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:var(--dim);margin-top:6px">
@@ -1743,10 +1744,48 @@ function loadAMap(cb){
  s.onload=function(){cb(!!(window.AMap&&window.AMap.Map));};
  s.onerror=function(){cb(false);};
  document.head.appendChild(s);}
-function initMap(){
- if(!(window.AMap&&window.AMap.Map))return false;
- if(!map){map=new AMap.Map('p10Map',{zoom:11,center:new AMap.LngLat(116.47,39.95),
-  mapStyle:'amap://styles/dark',viewMode:'2D',resizeEnable:true});}
+var mapRetry=0;
+function kickResize(){[0,120,400,900,1600].forEach(function(d){
+ setTimeout(function(){try{if(map)map.resize();}catch(e){}},d);});}
+var tileChecked=false;
+function tileWatch(){
+ try{
+  var el=$('p10Map');if(!el||!map)return;
+  var n=el.querySelectorAll('img').length;
+  var m=$('p10MapMsg');
+  if(n>0){if(m)m.style.display='none';return;}
+  try{map.destroy();}catch(e){}
+  map=null;
+  try{map=new AMap.Map('p10Map',{zoom:11,center:new AMap.LngLat(116.47,39.95),
+   viewMode:'2D',resizeEnable:true});}catch(e){}
+  if(map&&map.on)map.on('complete',function(){
+    try{map.resize();}catch(e){}
+    if(!tileChecked){tileChecked=true;setTimeout(tileWatch,2600);}
+  });
+  kickResize();
+  setTimeout(function(){try{map.resize();drawMap();}catch(e){}},300);
+  if(m){m.style.display='block';
+   m.innerHTML='<span style="color:#fbbf24">⚠ </span>深色自定义样式未生效，已自动回退为标准地图。'
+   +'若仍为空白网格，请到 console.amap.com 确认：<b>①服务平台为「Web端(JS API)」</b>；'
+   +'<b>②域名白名单清空</b>（当前域名 '+location.host+'）。';}
+ }catch(e){}}
+function initMap(cb){
+ var el=$('p10Map');
+ if(!(window.AMap&&window.AMap.Map)||!el){if(cb)cb(false);return false;}
+ if(!map){
+  var h=el.clientHeight||el.offsetHeight||0;
+  if(h<10){
+   if(mapRetry++>60){if(cb)cb(false);return false;}
+   setTimeout(function(){initMap(cb);},120);return false;}
+  mapRetry=0;
+  try{map=new AMap.Map('p10Map',{zoom:11,center:new AMap.LngLat(116.47,39.95),
+   mapStyle:'amap://styles/dark',viewMode:'2D',resizeEnable:true});}
+  catch(e){if(cb)cb(false);return false;}
+  if(map&&map.on)map.on('complete',function(){try{map.resize();}catch(e){}});
+  kickResize();
+ }
+ try{map.resize();}catch(e){}
+ if(cb)cb(true);
  return true;}
 function mkDot(lng,lat,col,sz,label,lcol){
  var d=document.createElement('div');
@@ -1773,7 +1812,9 @@ function drawMap(){
   m.setMap(map);OVL.push(m);});
  if(!LAST)return;
  if(showMode==='both'||showMode==='base')paintSet(LAST.base.routes,'#f43f5e',3.5,.55);
- if(showMode==='both'||showMode==='opt')paintSet(LAST.opt.routes,'#3b82f6',5,.95);}
+ if(showMode==='both'||showMode==='opt')paintSet(LAST.opt.routes,'#3b82f6',5,.95);
+ try{map.resize();}catch(e){}
+ setTimeout(function(){try{map.setFitView(null,false,[30,30,30,30]);}catch(e){}},80);}
 function paintSet(routes,col,w,op){
  routes.forEach(function(seq){
   var p=[new AMap.LngLat(DEP.lng,DEP.lat)];
@@ -2003,11 +2044,11 @@ function run(){
  LAST={base:evaluate(bb.routes,T,soc),opt:evaluate(ob.routes,T,soc),
   trace:ob.trace.length?ob.trace:[0],soc:soc,T:T};
  renderKPI();drawCharts();renderAdvice();renderCarbon();renderJSON();
- if(window.AMap&&window.AMap.Map){initMap();drawMap();}
+ if(window.AMap&&window.AMap.Map){initMap(function(ok){if(ok)drawMap();});}
  else loadAMap(function(ok){
   var m=$('p10MapMsg');
   if(!ok){if(m){m.style.display='block';m.innerHTML='<span style="color:#fbbf24">⚠ </span>高德地图未加载（Key 无效或断网），计算结果与全部图表不受影响。';}}
-  else{m.style.display='none';initMap();drawMap();}});}
+  else{m.style.display='none';initMap(function(o){if(o)drawMap();});}});}
 
 function refreshRoads(){
  if(!LAST)return run();
@@ -2051,15 +2092,30 @@ function bind(){
     m.innerHTML='<span style="color:#fbbf24">⚠ </span>高德未加载，无法刷新真实路网；当前使用内置路网系数（Haversine×1.35）。';}}
    else refreshRoads();});}
   else refreshRoads();};
+ var rl=$('p10Reload');
+ if(rl)rl.onclick=function(){
+  var m=$('p10MapMsg');
+  try{if(map){map.destroy();}}catch(e){}
+  map=null;mapRetry=0;
+  if(m){m.style.display='block';m.innerHTML='<span style="color:#3b82f6">⟲ </span>正在重新加载地图…';}
+  loadAMap(function(ok){
+   if(!ok){if(m){m.style.display='block';m.innerHTML='<span style="color:#fbbf24">⚠ </span>高德脚本未加载：请检查网络，或到 console.amap.com 确认 Key 服务平台为「Web端(JS API)」、域名白名单留空。';}return;}
+   initMap(function(o){
+    if(o){drawMap();
+     if(m){m.style.display='block';m.innerHTML='<span style="color:#00e5a0">✓ </span>地图已重建。若仍为空白网格，多为 Key 域名白名单未包含本网址：到 console.amap.com 把「'+location.host+'」加入白名单，或清空白名单。';}}
+    else{if(m){m.style.display='block';m.innerHTML='<span style="color:#fbbf24">⚠ </span>地图容器未就绪，请稍候再点一次。';}}
+   });});};
  ['p10N','p10K','p10Soc','p10Trip'].forEach(function(id){
   var e=$(id);if(e)e.onchange=run;});}
 
 window.P10_boot=function(){
  if(READY){Object.keys(CH).forEach(function(k){try{CH[k].resize();}catch(e){}});
-  if(map){try{map.resize();}catch(e){}}return;}
+  if(map){try{map.resize();drawMap();}catch(e){}}
+  else if(window.AMap&&window.AMap.Map){initMap(function(o){if(o)drawMap();});}
+  return;}
  READY=true;
  buildM();bind();run();
- loadAMap(function(ok){if(ok){initMap();drawMap();}
+ loadAMap(function(ok){if(ok){initMap(function(o){if(o)drawMap();kickResize();});}
   else{var m=$('p10MapMsg');
    if(m){m.style.display='block';m.innerHTML='<span style="color:#fbbf24">⚠ </span>高德地图未加载（Key 无效或断网），自动降级为内置路网系数；计算、图表与建议不受影响。';}}});
  window.addEventListener('resize',function(){Object.keys(CH).forEach(function(k){try{CH[k].resize();}catch(e){}});});};
@@ -3131,8 +3187,9 @@ document.querySelectorAll('.nav a').forEach(a=>{
     a.classList.add('on');
     document.getElementById(a.dataset.p).classList.add('on');
     resizePage(a.dataset.p);
-    if(a.dataset.p==='p10'&&STATE.mapSrc==='amap'){
+    if(a.dataset.p==='p10'){
       setTimeout(()=>{ try{ if(amapObj)amapObj.resize(); renderScene(); }catch(e){} },80);
+      setTimeout(()=>{ try{ renderScene(); }catch(e){} },420);
     }
     window.scrollTo({top:0,behavior:'smooth'});
   };
